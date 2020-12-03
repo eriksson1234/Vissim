@@ -1,0 +1,173 @@
+%Vissim Data Collection MatLab Code
+
+
+%% define file location and open Vissim
+filePath = 'C:\Users\VISSIM2\Desktop\team 11\Latest_NYC_Autonomous_Mix_Behavior.inpx';
+% filePath variable needs to be edited to the file path of whichever Vissim
+% model wants to be tested
+Vissim = actxserver('vissim.vissim.110');Vissim.LoadNet(filePath);
+set(Vissim.Graphics.CurrentNetworkWindow, 'AttValue', 'QuickMode',1);
+
+%% define vissim object
+sim = Vissim.Simulation;vnet=Vissim.Net;vinput=vnet.VehicleInputs;
+sim.Stop;close all;
+
+%% set simulation parameters
+period_time = 60*60*2;
+step_time = 1; %Always keep this at 1 or change across all trials so data is consistent
+Random_Seed = 42;
+sim.set('AttValue', 'SimPeriod', period_time);
+sim.set('AttValue', 'SimRes', step_time);
+set(Vissim.Simulation, 'AttValue', 'RandSeed', Random_Seed);
+
+% define vehicle volumes
+volume_1 = 2400;
+volume_2 = 684;
+volume_3 = 684;
+volume_4 = 684;
+volume_5 = 684;
+
+set(vinput.GetAll{1}, 'AttValue', 'Volume(1)', volume_1);
+set(vinput.GetAll{2}, 'AttValue', 'Volume(1)', volume_2);
+set(vinput.GetAll{3}, 'AttValue', 'Volume(1)', volume_3);
+set(vinput.GetAll{4}, 'AttValue', 'Volume(1)', volume_4);
+set(vinput.GetAll{5}, 'AttValue', 'Volume(1)', volume_5);
+
+
+%% preallocate arrays for travel time, queue time, and variance of travel time for all vehicle routes
+
+t = 0;
+veh_list = [];
+travel_time_5th_avenue = [];
+veh_5th_avenue = [];
+veh_instantaneous_speed_5th_avenue = [];
+
+
+
+
+%Define 5th Avenue Route
+
+links_5th_avenue = [6,10003,4,10005,7,10011,10,10015,13];
+
+%% Start Up The Simulation
+
+
+%Skip 100 simulation seconds to get some traffic piling up
+while t <= 100 %always keep this number at 100 so data is consistent
+    sim.RunSingleStep;
+    t = t+1;
+end
+
+t = 0;
+hour = 0;
+
+while hour ~= 2
+    sim.RunSingleStep;
+    t = t+1;
+    hour = t/(60*60) + 1;
+    
+    delete_5th_avenue = [];
+    flag = 0;
+    
+      
+    if mod(t, 60*60) ~= 0
+        veh_IDs=vnet.Vehicles.GetMultiAttValues('No');
+        if ~isempty(veh_IDs)
+            veh_ID  = sscanf(sprintf('%f ',veh_IDs{:,2}),'%f');
+            
+            veh_linklanes = vnet.Vehicles.GetMultiAttValues('Lane');
+            veh_linklane = veh_linklanes(:,2);
+            [row_linklist, column_linklist] = size(veh_linklane);
+            
+            % cell to double array DO NOT TOUCH ANY PORTION OF THIS CODE
+            p = string(veh_linklane);
+            for i = 1:row_linklist
+                if contains(p(i),"-")
+                    p(i) = extractBefore(p(i),"-");
+                end
+            end
+            veh_linklane = str2double(p);
+            veh_list = [veh_ID, veh_linklane];
+            
+            
+            
+            % Add vehicles that are on 5th avenue into potential 5th
+            % avenue route
+            
+            [row_vehlist, column_vehlist] = size(veh_list);
+            
+            for i = 1:row_vehlist
+                if veh_list(i, 2) == links_5th_avenue(1)
+                    if ~ismember(veh_list(i, 1), veh_5th_avenue)
+                        veh_5th_avenue = [veh_5th_avenue; veh_list(i,:)];
+                    end
+                end
+            end
+            [row_5th_avenue, ~] = size(veh_5th_avenue);
+            
+            
+            % check whether vehicles in list follow the 5th avenue route
+            for i = 1:row_5th_avenue
+                for j = 1:row_vehlist
+                    if veh_list(j, 1) == veh_5th_avenue(i,1)
+                        r = j;
+                        flag = 1;
+                    end
+                end
+                if flag == 1
+                    if ismember(veh_list(r, 2), links_5th_avenue)
+                        veh_5th_avenue(i, 2) = veh_list(r, 2);
+                    else
+                        delete_5th_avenue = [delete_5th_avenue, i];
+                    end
+                else
+                    delete_5th_avenue = [delete_5th_avenue, i];
+                end
+            end
+            veh_5th_avenue(delete_5th_avenue,:) = [];
+            
+            flag = 0;
+            delete_5th_avenue = [];
+            [row_5th_avenue, ~] = size(veh_5th_avenue);
+            
+            
+            
+            % check whether the vehicles has reached the end of the route
+            for i = 1:row_5th_avenue
+                if veh_5th_avenue(i, 2) == links_5th_avenue(end)
+                    All_Vehicles = Vissim.Net.Vehicles.GetAll; % get all vehicles in the network at the actual simulation second
+                    for cnt_Veh = 1 : length(All_Vehicles)
+                        veh_number = get(All_Vehicles{cnt_Veh}, 'AttValue', 'No');
+                        veh_speed = get(All_Vehicles{cnt_Veh}, 'AttValue', 'Speed');
+                        veh_instantaneous_speed_5th_avenue = [veh_instantaneous_speed_5th_avenue,veh_speed];
+                        if veh_number == veh_5th_avenue(i, 1)
+                            veh_timeinnet = get(All_Vehicles{cnt_Veh}, 'AttValue', 'TmInNetTot');
+                            travel_time_5th_avenue = [travel_time_5th_avenue, veh_timeinnet];
+                        end
+                    end
+                    delete_5th_avenue = [delete_5th_avenue, i];
+                end
+            end
+            veh_5th_avenue(delete_5th_avenue,:) = [];
+            
+            
+            
+            
+        end
+
+    else
+        disp(hour);
+        
+        avg_veh_speed_5th_avenue = mean(veh_instantaneous_speed_5th_avenue);
+        
+        avg_5th_avenue = mean(travel_time_5th_avenue);
+
+        
+        
+        travel_time_5th_avenue = [];
+        var_5th_avenue = [];
+        qtime_5th_avenue = [];
+        sim.Stop;close all;
+    end
+        
+end
